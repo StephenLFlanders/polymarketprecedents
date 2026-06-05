@@ -1,72 +1,52 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-interface LinkInput {
-  text: string;
-  slug: string;
+export interface PrecedentInput {
+  q: string;
+  outcome: string;
+  lesson: string;
 }
 
-interface LinkResult {
-  text: string;
-  slug: string | null;
-  verified: boolean;
+export interface PrecedentResult extends PrecedentInput {
+  url: string | null;
 }
 
-async function verifySlug(slug: string): Promise<boolean> {
+async function searchForSlug(query: string, closed = false): Promise<string | null> {
+  const params = new URLSearchParams({ search: query, limit: '5' });
+  if (closed) params.set('closed', 'true');
   try {
     const res = await fetch(
-      `https://gamma-api.polymarket.com/markets?slug=${encodeURIComponent(slug)}&limit=1`,
-      { signal: AbortSignal.timeout(4000) }
+      `https://gamma-api.polymarket.com/markets?${params}`,
+      { signal: AbortSignal.timeout(5000) }
     );
-    if (!res.ok) return false;
+    if (!res.ok) return null;
     const data = await res.json();
-    return Array.isArray(data) && data.length > 0;
+    if (!Array.isArray(data) || data.length === 0) return null;
+    // Pick best match: prefer questions containing any key word from query
+    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 4);
+    const best = data.find((m: Record<string, unknown>) =>
+      queryWords.some(w => String(m.question ?? '').toLowerCase().includes(w))
+    ) ?? data[0];
+    return best?.slug ? String(best.slug) : null;
   } catch {
-    return false;
+    return null;
   }
-}
-
-async function searchForSlug(query: string): Promise<string | null> {
-  for (const extra of ['', '&closed=true']) {
-    try {
-      const res = await fetch(
-        `https://gamma-api.polymarket.com/markets?search=${encodeURIComponent(query)}&limit=3${extra}`,
-        { signal: AbortSignal.timeout(4000) }
-      );
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0 && data[0].slug) {
-        return data[0].slug as string;
-      }
-    } catch {
-      continue;
-    }
-  }
-  return null;
 }
 
 export async function POST(req: NextRequest) {
-  const { links } = await req.json() as { links: LinkInput[] };
+  const { precedents } = await req.json() as { precedents: PrecedentInput[] };
 
-  if (!Array.isArray(links) || links.length === 0) {
+  if (!Array.isArray(precedents) || precedents.length === 0) {
     return NextResponse.json([]);
   }
 
-  const results: LinkResult[] = await Promise.all(
-    links.map(async ({ text, slug }) => {
-      // 1. Try the slug Claude guessed
-      if (await verifySlug(slug)) {
-        return { text, slug, verified: true };
-      }
-
-      // 2. Search by the link text (market title)
-      const byTitle = await searchForSlug(text);
-      if (byTitle) return { text, slug: byTitle, verified: true };
-
-      // 3. Search by slug converted to words
-      const bySlugWords = await searchForSlug(slug.replace(/-/g, ' '));
-      if (bySlugWords) return { text, slug: bySlugWords, verified: true };
-
-      return { text, slug: null, verified: false };
+  const results: PrecedentResult[] = await Promise.all(
+    precedents.map(async (p) => {
+      // Search active markets first, then closed/resolved
+      const slug = (await searchForSlug(p.q)) ?? (await searchForSlug(p.q, true));
+      return {
+        ...p,
+        url: slug ? `https://polymarket.com/event/${slug}` : null,
+      };
     })
   );
 

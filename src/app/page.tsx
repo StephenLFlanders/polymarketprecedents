@@ -4,37 +4,31 @@ import { useState } from 'react';
 import MarketSearch from '@/components/MarketSearch';
 import MarketAnalysis from '@/components/MarketAnalysis';
 import { MarketData } from '@/lib/polymarket';
+import { PrecedentResult } from '@/app/api/verify-precedents/route';
 
-async function verifyLinks(markdown: string): Promise<string> {
-  const linkRegex = /\[([^\]]+)\]\(https:\/\/polymarket\.com\/event\/([^)\s]+)\)/g;
-  const matches = [...markdown.matchAll(linkRegex)];
-  if (matches.length === 0) return markdown;
+// Parse PRECEDENT: lines out of the analysis and return the cleaned body text
+function extractPrecedents(text: string): {
+  body: string;
+  inputs: Array<{ q: string; outcome: string; lesson: string }>;
+} {
+  const headerRe = /^## 📚 Historical Precedents\s*$/m;
+  const match = headerRe.exec(text);
+  if (!match || match.index === undefined) return { body: text, inputs: [] };
 
-  const links = matches.map(([, text, slug]) => ({ text, slug }));
+  const body = text.slice(0, match.index).trim();
+  const after = text.slice(match.index + match[0].length);
 
-  try {
-    const res = await fetch('/api/verify-precedents', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ links }),
-    });
-    if (!res.ok) return markdown;
-    const verified: Array<{ text: string; slug: string | null; verified: boolean }> = await res.json();
-
-    let result = markdown;
-    matches.forEach(([original, text, oldSlug], i) => {
-      const v = verified[i];
-      if (v.verified && v.slug && v.slug !== oldSlug) {
-        result = result.replace(original, `[${text}](https://polymarket.com/event/${v.slug})`);
-      } else if (!v.verified) {
-        // Remove broken link, keep the display text
-        result = result.replace(original, text);
-      }
-    });
-    return result;
-  } catch {
-    return markdown;
+  const inputs: Array<{ q: string; outcome: string; lesson: string }> = [];
+  for (const line of after.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('PRECEDENT:')) continue;
+    const content = trimmed.slice('PRECEDENT:'.length).trim();
+    if (content === 'none') continue;
+    // Format: "question" | OUTCOME | lesson
+    const m = content.match(/^"([^"]+)"\s*\|\s*(YES|NO|N\/A)\s*\|\s*(.+)$/i);
+    if (m) inputs.push({ q: m[1].trim(), outcome: m[2].toUpperCase(), lesson: m[3].trim() });
   }
+  return { body, inputs };
 }
 
 export default function Home() {
@@ -43,6 +37,8 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [precedents, setPrecedents] = useState<PrecedentResult[]>([]);
+  const [precedentsLoading, setPrecedentsLoading] = useState(false);
 
   const handleSearch = async (query: string) => {
     const isUrl = query.includes('://') || query.startsWith('www.');
@@ -56,6 +52,8 @@ export default function Home() {
     setMarket(null);
     setAnalysis('');
     setIsStreaming(false);
+    setPrecedents([]);
+    setPrecedentsLoading(false);
 
     try {
       const marketRes = await fetch(`/api/market?q=${encodeURIComponent(query)}`);
@@ -96,8 +94,22 @@ export default function Home() {
           const data = event.slice(6);
           if (data === '[DONE]') {
             setIsStreaming(false);
-            // Verify and fix all polymarket.com links after stream completes
-            setAnalysis(await verifyLinks(fullText));
+            // Parse PRECEDENT: lines out of the analysis body
+            const { body, inputs } = extractPrecedents(fullText);
+            setAnalysis(body);
+            if (inputs.length > 0) {
+              setPrecedentsLoading(true);
+              try {
+                const vRes = await fetch('/api/verify-precedents', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ precedents: inputs }),
+                });
+                if (vRes.ok) setPrecedents(await vRes.json());
+              } finally {
+                setPrecedentsLoading(false);
+              }
+            }
             return;
           }
           try {
@@ -156,6 +168,8 @@ export default function Home() {
           analysis={analysis}
           isStreaming={isStreaming}
           isLoading={isLoading}
+          precedents={precedents}
+          precedentsLoading={precedentsLoading}
         />
 
         {!market && !isLoading && (

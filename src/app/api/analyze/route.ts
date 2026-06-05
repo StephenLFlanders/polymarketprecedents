@@ -45,9 +45,13 @@ Tight bullet list. Lead with the most surprising ways this resolves NO — thing
 - Wording that means something different than it appears
 
 ## 📚 Historical Precedents
-List only real, specific Polymarket markets that are directly relevant. For each one, format as a markdown link using your best guess at the Polymarket slug:
-[Market question text](https://polymarket.com/event/your-best-guess-at-the-slug)
-Then in 1 sentence: how it resolved and what it teaches. If you don't know of directly relevant precedents, say so — don't invent them.
+For each relevant precedent you have real knowledge of, output EXACTLY one line per market in this format — nothing else in this section:
+PRECEDENT: "Exact or close market question" | YES or NO | One sentence on what it teaches
+
+Rules:
+- Do NOT include URLs or slugs — links are resolved separately
+- Only include markets you have genuine knowledge of from Polymarket
+- If no directly relevant precedents exist, write: PRECEDENT: none
 
 Be specific and concise. Prioritize the non-obvious.`;
 }

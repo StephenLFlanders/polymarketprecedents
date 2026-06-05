@@ -2,13 +2,17 @@
 
 import { MarketData } from '@/lib/polymarket';
 import MarkdownRenderer from './MarkdownRenderer';
+import PrecedentsSection from './PrecedentsSection';
 import { TrendingUp, Clock, ExternalLink, Loader2 } from 'lucide-react';
+import { PrecedentResult } from '@/app/api/verify-precedents/route';
 
 interface Props {
   market: MarketData | null;
   analysis: string;
   isStreaming: boolean;
   isLoading: boolean;
+  precedents: PrecedentResult[];
+  precedentsLoading: boolean;
 }
 
 function formatVolume(v: string): string {
@@ -34,7 +38,7 @@ function formatDate(d: string | null): string {
   }
 }
 
-export default function MarketAnalysis({ market, analysis, isStreaming, isLoading }: Props) {
+export default function MarketAnalysis({ market, analysis, isStreaming, isLoading, precedents, precedentsLoading }: Props) {
   if (isLoading && !market) {
     return (
       <div className="mt-8 flex items-center justify-center gap-3 text-gray-500 py-12">
@@ -136,16 +140,25 @@ export default function MarketAnalysis({ market, analysis, isStreaming, isLoadin
           </div>
 
           {analysis ? (
-            <MarkdownRenderer content={analysis} />
+            <>
+              <MarkdownRenderer content={analysis} />
+              {isStreaming && (
+                <span className="inline-block w-0.5 h-4 bg-emerald-400 animate-pulse ml-0.5 align-text-bottom" />
+              )}
+              {(!isStreaming && (precedentsLoading || precedents.length > 0)) && (
+                <div className="mt-6 pt-6 border-t border-white/[0.06]">
+                  <h2 className="text-lg font-bold text-white mb-3 pb-2 border-b border-white/10">
+                    📚 Historical Precedents
+                  </h2>
+                  <PrecedentsSection precedents={precedents} loading={precedentsLoading} />
+                </div>
+              )}
+            </>
           ) : (
             <div className="flex items-center gap-3 text-gray-600 py-4">
               <Loader2 className="w-4 h-4 animate-spin" />
               <span className="text-sm">Generating analysis...</span>
             </div>
-          )}
-
-          {isStreaming && analysis && (
-            <span className="inline-block w-0.5 h-4 bg-emerald-400 animate-pulse ml-0.5 align-text-bottom" />
           )}
         </div>
       )}
