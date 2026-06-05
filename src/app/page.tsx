@@ -5,6 +5,38 @@ import MarketSearch from '@/components/MarketSearch';
 import MarketAnalysis from '@/components/MarketAnalysis';
 import { MarketData } from '@/lib/polymarket';
 
+async function verifyLinks(markdown: string): Promise<string> {
+  const linkRegex = /\[([^\]]+)\]\(https:\/\/polymarket\.com\/event\/([^)\s]+)\)/g;
+  const matches = [...markdown.matchAll(linkRegex)];
+  if (matches.length === 0) return markdown;
+
+  const links = matches.map(([, text, slug]) => ({ text, slug }));
+
+  try {
+    const res = await fetch('/api/verify-precedents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ links }),
+    });
+    if (!res.ok) return markdown;
+    const verified: Array<{ text: string; slug: string | null; verified: boolean }> = await res.json();
+
+    let result = markdown;
+    matches.forEach(([original, text, oldSlug], i) => {
+      const v = verified[i];
+      if (v.verified && v.slug && v.slug !== oldSlug) {
+        result = result.replace(original, `[${text}](https://polymarket.com/event/${v.slug})`);
+      } else if (!v.verified) {
+        // Remove broken link, keep the display text
+        result = result.replace(original, text);
+      }
+    });
+    return result;
+  } catch {
+    return markdown;
+  }
+}
+
 export default function Home() {
   const [market, setMarket] = useState<MarketData | null>(null);
   const [analysis, setAnalysis] = useState('');
@@ -49,6 +81,7 @@ export default function Home() {
       const reader = analysisRes.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let fullText = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -63,12 +96,17 @@ export default function Home() {
           const data = event.slice(6);
           if (data === '[DONE]') {
             setIsStreaming(false);
+            // Verify and fix all polymarket.com links after stream completes
+            setAnalysis(await verifyLinks(fullText));
             return;
           }
           try {
             const parsed = JSON.parse(data);
             if (parsed.error) throw new Error(parsed.error);
-            if (parsed.text) setAnalysis(prev => prev + parsed.text);
+            if (parsed.text) {
+              fullText += parsed.text;
+              setAnalysis(fullText);
+            }
           } catch (parseErr) {
             if (parseErr instanceof Error && parseErr.message !== 'Unexpected end of JSON input') {
               throw parseErr;
