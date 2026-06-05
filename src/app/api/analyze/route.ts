@@ -26,55 +26,30 @@ ${market.endDate ? `END DATE: ${market.endDate}` : ''}
 ${market.closed ? `STATUS: CLOSED/RESOLVED` : market.active ? 'STATUS: ACTIVE' : 'STATUS: Unknown'}
 ---
 
-Provide a comprehensive analysis with exactly these sections:
+Provide a tight, high-signal analysis with exactly these sections. Be concise — traders want clarity, not length.
 
 ## Plain English Summary
-What is this market actually asking? Explain it clearly for someone who knows nothing about the topic. One concise paragraph.
-
-## Resolution Criteria Breakdown
-Dissect the resolution rules carefully. Identify:
-- The primary condition(s) that trigger YES
-- The exact timeframe requirement and how it's measured
-- The source of truth (how will Polymarket verify? what counts as official?)
-- Any ambiguous or loose language that creates uncertainty
+1-2 sentences max. What is this market asking and what's the key thing that determines YES vs NO?
 
 ## ✅ YES — What Qualifies
-Bullet list of exactly what needs to happen for YES. Be exhaustive. Include:
-- The primary requirement
-- Edge cases that would still count as YES
-- Timing: announcement date? event date? filing date? reporting date? What's the relevant trigger?
-- Required documentation or sources
+Tight bullet list. Primary requirement first, then any non-obvious edge cases. Include the specific timing trigger (announcement date? event date? filing date?).
 
 ## ❌ NO — What Qualifies
-Bullet list of what causes NO. This is critical. Include:
-- Straightforward failure conditions
-- **Surprising edge cases** — things that LOOK like YES but resolve NO
-- Timing traps: things that happen before the deadline but aren't announced/reported until after
-- Partial completion scenarios
-- Missing documentation scenarios
+Tight bullet list. Lead with the most surprising ways this resolves NO — things that look like YES but aren't. Timing traps first.
 
 ## ⚠️ Key Gotchas & Traps
-This is the most valuable section. What would trip up a trader who read the rules casually? Focus on:
-- **Announcement vs. Event Date**: Does the market resolve based on when something was publicly announced/disclosed, or when it actually occurred?
-- **Source of Truth**: What specific source does Polymarket use? Official filing? Specific news outlet? Press release? Tweet?
-- **Deadline Interpretation**: How strictly is "by [date]" interpreted?
-- **Partial vs. Full Completion**: Is there a threshold? Does any amount count?
-- **Retroactive vs. Prospective**: Can past actions count, or only future ones?
-- **Wording Traps**: Specific words in the resolution criteria that have non-obvious meanings in Polymarket context
+2-4 bullets max. Only the non-obvious stuff a casual trader would miss:
+- Announcement vs. event date traps
+- Source of truth requirements
+- Deadline interpretation edge cases
+- Wording that means something different than it appears
 
 ## 📚 Historical Precedents
-Reference specific similar markets and how they resolved. Include:
-- Markets with similar structure (same company/entity, same type of action, similar timeframe language)
-- Cases where "announcement date" ≠ "event date" and how Polymarket handled it
-- UMA dispute resolutions for analogous situations
-- Cases where strict source requirements were enforced
-- The MicroStrategy bitcoin precedent specifically if this market involves corporate crypto sales or similar actions
-- Be specific: name actual markets, outcomes, and the reasoning used
+List only real, specific Polymarket markets that are directly relevant. For each one, format as a markdown link using your best guess at the Polymarket slug:
+[Market question text](https://polymarket.com/event/your-best-guess-at-the-slug)
+Then in 1 sentence: how it resolved and what it teaches. If you don't know of directly relevant precedents, say so — don't invent them.
 
-## 💡 Smart Trader Edge
-What is the information edge here? What should a sharp trader be monitoring that casual traders overlook? What's the single most important thing to watch?
-
-Write like a seasoned prediction market trader explaining this to a colleague. Be specific, concrete, and prioritize identifying the non-obvious resolution risks that determine the real edge in this market.`;
+Be specific and concise. Prioritize the non-obvious.`;
 }
 
 export async function POST(req: NextRequest) {

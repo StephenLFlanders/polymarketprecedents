@@ -45,6 +45,16 @@ const components: Components = {
     </blockquote>
   ),
   hr: () => <hr className="border-white/10 my-6" />,
+  a: ({ href, children }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-emerald-400 hover:text-emerald-300 underline underline-offset-2 transition-colors"
+    >
+      {children}
+    </a>
+  ),
 };
 
 export default function MarkdownRenderer({ content }: Props) {
