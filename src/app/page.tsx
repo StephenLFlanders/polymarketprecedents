@@ -13,6 +13,12 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   const handleSearch = async (query: string) => {
+    const isUrl = query.includes('://') || query.startsWith('www.');
+    if (isUrl && !query.includes('polymarket.com')) {
+      setError('This is not a Polymarket link. Please paste a polymarket.com URL or market slug.');
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     setMarket(null);

@@ -7,6 +7,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing query parameter' }, { status: 400 });
   }
 
+  // Reject non-Polymarket URLs immediately before any external calls
+  const isUrl = q.includes('://') || q.startsWith('www.');
+  if (isUrl && !q.includes('polymarket.com')) {
+    return NextResponse.json(
+      { error: 'This is not a Polymarket link. Please paste a polymarket.com URL or market slug.' },
+      { status: 400 }
+    );
+  }
+
   try {
     const market = await resolveMarketQuery(q);
     return NextResponse.json(market);
