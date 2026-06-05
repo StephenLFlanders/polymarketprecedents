@@ -57,18 +57,30 @@ export async function searchMarkets(query: string, limit = 5): Promise<MarketDat
 }
 
 export async function resolveMarketQuery(query: string): Promise<MarketData> {
-  const slug = extractSlug(query);
+  const trimmed = query.trim();
+  const isUrl = trimmed.includes('polymarket.com') || trimmed.includes('/');
+  const slug = extractSlug(trimmed);
 
+  // Always try the extracted slug first
   const bySlug = await fetchMarketBySlug(slug);
   if (bySlug) return bySlug;
 
-  const results = await searchMarkets(query, 1);
-  if (results.length > 0) return results[0];
+  // If input was a URL/slug, don't fall back to fuzzy search — the market likely doesn't exist
+  if (isUrl) {
+    throw new Error(`Market not found for slug "${slug}". The market may have been removed or the URL may be incorrect.`);
+  }
 
-  const byOriginal = await fetchMarketBySlug(query.trim());
-  if (byOriginal) return byOriginal;
+  // For free-text queries, try search
+  const results = await searchMarkets(trimmed, 5);
+  // Only return a search result if the question roughly matches the query
+  const queryWords = trimmed.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  const match = results.find(m => {
+    const q = m.question.toLowerCase();
+    return queryWords.some(w => q.includes(w));
+  });
+  if (match) return match;
 
-  throw new Error(`No market found for: "${query}". Try pasting the full Polymarket URL.`);
+  throw new Error(`No market found for: "${trimmed}". Try pasting the full Polymarket URL.`);
 }
 
 function normalizeMarket(raw: Record<string, unknown>): MarketData {
