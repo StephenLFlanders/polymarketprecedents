@@ -10,7 +10,14 @@ export interface PrecedentResult extends PrecedentInput {
   url: string | null;
 }
 
-async function searchForSlug(query: string, closed = false): Promise<string | null> {
+function scoreMatch(query: string, candidate: string): number {
+  const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  if (words.length === 0) return 0;
+  const c = candidate.toLowerCase();
+  return words.filter(w => c.includes(w)).length / words.length;
+}
+
+async function searchMarketsForSlug(query: string, closed = false): Promise<string | null> {
   const params = new URLSearchParams({ search: query, limit: '10' });
   if (closed) params.set('closed', 'true');
   try {
@@ -22,24 +29,41 @@ async function searchForSlug(query: string, closed = false): Promise<string | nu
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0) return null;
 
-    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-    if (queryWords.length === 0) return null;
-
-    // Score each result by what fraction of query words appear in the market question
     let bestSlug: string | null = null;
     let bestScore = 0;
-
     for (const m of data) {
-      const q = String(m.question ?? '').toLowerCase();
-      const matched = queryWords.filter(w => q.includes(w)).length;
-      const score = matched / queryWords.length;
-      if (score > bestScore) {
-        bestScore = score;
-        bestSlug = m.slug ? String(m.slug) : null;
-      }
+      const score = scoreMatch(query, String(m.question ?? ''));
+      if (score > bestScore) { bestScore = score; bestSlug = m.slug ? String(m.slug) : null; }
     }
+    return bestScore >= 0.5 ? bestSlug : null;
+  } catch {
+    return null;
+  }
+}
 
-    // Require at least 50% of words to match — no fallback to unrelated markets
+async function searchEventsForSlug(query: string, closed = false): Promise<string | null> {
+  const params = new URLSearchParams({ search: query, limit: '10' });
+  if (closed) params.set('closed', 'true');
+  try {
+    const res = await fetch(
+      `https://gamma-api.polymarket.com/events?${params}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) return null;
+
+    let bestSlug: string | null = null;
+    let bestScore = 0;
+    for (const e of data) {
+      // Score against event title and against each child market question
+      const titleScore = scoreMatch(query, String(e.title ?? ''));
+      const marketScore = Array.isArray(e.markets)
+        ? Math.max(0, ...e.markets.map((m: Record<string, unknown>) => scoreMatch(query, String(m.question ?? ''))))
+        : 0;
+      const score = Math.max(titleScore, marketScore);
+      if (score > bestScore) { bestScore = score; bestSlug = e.slug ? String(e.slug) : null; }
+    }
     return bestScore >= 0.5 ? bestSlug : null;
   } catch {
     return null;
@@ -55,8 +79,11 @@ export async function POST(req: NextRequest) {
 
   const results: PrecedentResult[] = await Promise.all(
     precedents.map(async (p) => {
-      // Search active markets first, then closed/resolved
-      const slug = (await searchForSlug(p.q)) ?? (await searchForSlug(p.q, true));
+      const slug =
+        (await searchMarketsForSlug(p.q)) ??
+        (await searchMarketsForSlug(p.q, true)) ??
+        (await searchEventsForSlug(p.q)) ??
+        (await searchEventsForSlug(p.q, true));
       return {
         ...p,
         url: slug ? `https://polymarket.com/event/${slug}` : null,
