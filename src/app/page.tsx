@@ -5,6 +5,7 @@ import MarketSearch from '@/components/MarketSearch';
 import MarketAnalysis from '@/components/MarketAnalysis';
 import { MarketData } from '@/lib/polymarket';
 import { PrecedentResult } from '@/app/api/verify-precedents/route';
+import MarketPicker from '@/components/MarketPicker';
 
 // Parse PRECEDENT: lines out of the analysis and return the cleaned body text
 function extractPrecedents(text: string): {
@@ -39,6 +40,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [precedents, setPrecedents] = useState<PrecedentResult[]>([]);
   const [precedentsLoading, setPrecedentsLoading] = useState(false);
+  const [marketChoices, setMarketChoices] = useState<MarketData[]>([]);
 
   const handleSearch = async (query: string) => {
     const isUrl = query.includes('://') || query.startsWith('www.');
@@ -54,6 +56,7 @@ export default function Home() {
     setIsStreaming(false);
     setPrecedents([]);
     setPrecedentsLoading(false);
+    setMarketChoices([]);
 
     try {
       const marketRes = await fetch(`/api/market?q=${encodeURIComponent(query)}`);
@@ -61,11 +64,33 @@ export default function Home() {
         const err = await marketRes.json();
         throw new Error(err.error || 'Market not found');
       }
-      const marketData: MarketData = await marketRes.json();
-      setMarket(marketData);
-      setIsLoading(false);
+      const marketJson = await marketRes.json();
 
-      setIsStreaming(true);
+      // Event with multiple markets — show picker
+      if ('choices' in marketJson) {
+        setMarketChoices(marketJson.choices);
+        setIsLoading(false);
+        return;
+      }
+
+      const marketData: MarketData = marketJson;
+      setIsLoading(false);
+      await runAnalysis(marketData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+      setIsLoading(false);
+      setIsStreaming(false);
+    }
+  };
+
+  const runAnalysis = async (marketData: MarketData) => {
+    setMarket(marketData);
+    setAnalysis('');
+    setPrecedents([]);
+    setMarketChoices([]);
+    setIsStreaming(true);
+
+    try {
       const analysisRes = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -94,7 +119,6 @@ export default function Home() {
           const data = event.slice(6);
           if (data === '[DONE]') {
             setIsStreaming(false);
-            // Parse PRECEDENT: lines out of the analysis body
             const { body, inputs } = extractPrecedents(fullText);
             setAnalysis(body);
             if (inputs.length > 0) {
@@ -129,7 +153,6 @@ export default function Home() {
       setIsStreaming(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
-      setIsLoading(false);
       setIsStreaming(false);
     }
   };
@@ -161,6 +184,10 @@ export default function Home() {
           <div className="mt-6 p-4 bg-red-950/40 border border-red-500/20 rounded-xl text-red-400 text-sm">
             {error}
           </div>
+        )}
+
+        {marketChoices.length > 0 && (
+          <MarketPicker markets={marketChoices} onSelect={runAnalysis} />
         )}
 
         <MarketAnalysis

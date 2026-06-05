@@ -1,5 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { resolveMarketQuery } from '@/lib/polymarket';
+import { resolveMarketQuery, fetchMarketsFromEventSlug } from '@/lib/polymarket';
+
+function extractSlug(q: string): string {
+  if (q.includes('polymarket.com')) {
+    try {
+      const url = new URL(q.startsWith('http') ? q : 'https://' + q);
+      const parts = url.pathname.split('/').filter(Boolean);
+      return parts[parts.length - 1];
+    } catch { /* fall through */ }
+  }
+  if (q.includes('/')) return q.split('/').filter(Boolean).pop() ?? q;
+  return q;
+}
 
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get('q');
@@ -7,7 +19,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing query parameter' }, { status: 400 });
   }
 
-  // Reject non-Polymarket URLs immediately before any external calls
   const isUrl = q.includes('://') || q.startsWith('www.');
   if (isUrl && !q.includes('polymarket.com')) {
     return NextResponse.json(
@@ -19,8 +30,24 @@ export async function GET(req: NextRequest) {
   try {
     const market = await resolveMarketQuery(q);
     return NextResponse.json(market);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to fetch market';
-    return NextResponse.json({ error: message }, { status: 404 });
+  } catch {
+    // resolveMarketQuery failed — try the events API
+    const slug = extractSlug(q);
+    const eventMarkets = await fetchMarketsFromEventSlug(slug);
+
+    if (!eventMarkets || eventMarkets.length === 0) {
+      return NextResponse.json(
+        { error: `Market not found for "${slug}". The market may have been removed or the URL may be incorrect.` },
+        { status: 404 }
+      );
+    }
+
+    // Single market in event — return it directly
+    if (eventMarkets.length === 1) {
+      return NextResponse.json(eventMarkets[0]);
+    }
+
+    // Multiple markets — let the user pick
+    return NextResponse.json({ choices: eventMarkets });
   }
 }

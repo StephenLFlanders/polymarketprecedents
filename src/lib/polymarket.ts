@@ -56,17 +56,16 @@ export async function searchMarkets(query: string, limit = 5): Promise<MarketDat
   return data.map(normalizeMarket);
 }
 
-async function fetchMarketByEventSlug(slug: string): Promise<MarketData | null> {
+export async function fetchMarketsFromEventSlug(slug: string): Promise<MarketData[] | null> {
   const url = `https://gamma-api.polymarket.com/events?slug=${encodeURIComponent(slug)}&limit=1`;
   const res = await fetch(url, { next: { revalidate: 60 } });
   if (!res.ok) return null;
   const data = await res.json();
   if (!Array.isArray(data) || data.length === 0) return null;
   const event = data[0] as Record<string, unknown>;
-  // Events contain an array of markets — return the first one
   const markets = Array.isArray(event.markets) ? event.markets : [];
   if (markets.length === 0) return null;
-  return normalizeMarket(markets[0] as Record<string, unknown>);
+  return markets.map(m => normalizeMarket(m as Record<string, unknown>));
 }
 
 export async function resolveMarketQuery(query: string): Promise<MarketData> {
@@ -75,8 +74,9 @@ export async function resolveMarketQuery(query: string): Promise<MarketData> {
   const slug = extractSlug(trimmed);
 
   // Try market slug first, then event slug (Polymarket URLs are often event slugs)
-  const bySlug = (await fetchMarketBySlug(slug)) ?? (await fetchMarketByEventSlug(slug));
+  const bySlug = await fetchMarketBySlug(slug);
   if (bySlug) return bySlug;
+  // Event lookup handled separately in the API route (may return multiple choices)
 
   // If input was a URL/slug, don't fall back to fuzzy search — the market likely doesn't exist
   if (isUrl) {
