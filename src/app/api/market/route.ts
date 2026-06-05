@@ -47,7 +47,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(eventMarkets[0]);
     }
 
-    // Multiple markets — let the user pick
-    return NextResponse.json({ choices: eventMarkets });
+    // Multiple markets — only show active ones for the picker
+    const active = eventMarkets.filter(m => m.active && !m.closed);
+    const choices = active.length > 0 ? active : eventMarkets;
+    if (choices.length === 1) return NextResponse.json(choices[0]);
+    return NextResponse.json({ choices });
   }
 }
