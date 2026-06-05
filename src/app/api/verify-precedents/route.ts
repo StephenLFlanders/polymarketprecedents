@@ -11,7 +11,7 @@ export interface PrecedentResult extends PrecedentInput {
 }
 
 async function searchForSlug(query: string, closed = false): Promise<string | null> {
-  const params = new URLSearchParams({ search: query, limit: '5' });
+  const params = new URLSearchParams({ search: query, limit: '10' });
   if (closed) params.set('closed', 'true');
   try {
     const res = await fetch(
@@ -21,12 +21,26 @@ async function searchForSlug(query: string, closed = false): Promise<string | nu
     if (!res.ok) return null;
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0) return null;
-    // Pick best match: prefer questions containing any key word from query
-    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 4);
-    const best = data.find((m: Record<string, unknown>) =>
-      queryWords.some(w => String(m.question ?? '').toLowerCase().includes(w))
-    ) ?? data[0];
-    return best?.slug ? String(best.slug) : null;
+
+    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    if (queryWords.length === 0) return null;
+
+    // Score each result by what fraction of query words appear in the market question
+    let bestSlug: string | null = null;
+    let bestScore = 0;
+
+    for (const m of data) {
+      const q = String(m.question ?? '').toLowerCase();
+      const matched = queryWords.filter(w => q.includes(w)).length;
+      const score = matched / queryWords.length;
+      if (score > bestScore) {
+        bestScore = score;
+        bestSlug = m.slug ? String(m.slug) : null;
+      }
+    }
+
+    // Require at least 50% of words to match — no fallback to unrelated markets
+    return bestScore >= 0.5 ? bestSlug : null;
   } catch {
     return null;
   }
