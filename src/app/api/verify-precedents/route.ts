@@ -17,6 +17,13 @@ function scoreMatch(query: string, candidate: string): number {
   return words.filter(w => c.includes(w)).length / words.length;
 }
 
+function requiredTermsPresent(query: string, candidate: string): boolean {
+  // Any 4-digit number (years, IDs) in the query must appear in the candidate
+  const numbers = query.match(/\b\d{4}\b/g) ?? [];
+  const c = candidate.toLowerCase();
+  return numbers.every(n => c.includes(n));
+}
+
 interface Candidate { slug: string; score: number; }
 
 async function searchMarketsForCandidates(query: string, closed = false): Promise<Candidate[]> {
@@ -90,10 +97,11 @@ export async function POST(req: NextRequest) {
         null
       );
 
-      return {
-        ...p,
-        url: best && best.score >= 0.5 ? `https://polymarket.com/event/${best.slug}` : null,
-      };
+      const url = best && best.score >= 0.5 && requiredTermsPresent(p.q, best.slug)
+        ? `https://polymarket.com/event/${best.slug}`
+        : null;
+
+      return { ...p, url };
     })
   );
 
