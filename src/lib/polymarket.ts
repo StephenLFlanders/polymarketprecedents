@@ -93,14 +93,21 @@ export async function searchEvents(
   query: string,
   status?: 'active' | 'resolved'
 ): Promise<EventSearchResult[]> {
-  const params = new URLSearchParams({ q: query, limit_per_type: '10' });
+  const params = new URLSearchParams({
+    q: query,
+    limit_per_type: '10',
+    keep_closed_markets: '1',
+  });
   if (status) params.set('events_status', status);
   try {
     const res = await fetch(
       `https://gamma-api.polymarket.com/public-search?${params}`,
       { signal: AbortSignal.timeout(8000) }
     );
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.warn(`public-search failed (${res.status}) for query: ${query}`);
+      return [];
+    }
     const data = await res.json();
     const events = Array.isArray(data?.events) ? data.events : [];
     return events
@@ -115,17 +122,52 @@ export async function searchEvents(
           : [],
       }))
       .filter((e: EventSearchResult) => e.slug);
-  } catch {
+  } catch (err) {
+    console.warn(`public-search error for query "${query}":`, err);
     return [];
   }
 }
 
+const STOPWORDS = new Set([
+  'the', 'and', 'for', 'are', 'was', 'has', 'had', 'will', 'with', 'from',
+  'than', 'that', 'this', 'have', 'been', 'what', 'when', 'which', 'who',
+  'how', 'any', 'all', 'does', 'into', 'about', 'more', 'over', 'under',
+  'between', 'before', 'after', 'many', 'much', 'its', 'his', 'her', 'their',
+  'there', 'they', 'out', 'not', 'can', 'may', 'would', 'could', 'should',
+  'you', 'your', 'per', 'via', 'off',
+]);
+
+// Meaningful words of a question: placeholders like "[date range]" and
+// punctuation stripped, stopwords dropped. Model-generated precedent questions
+// sometimes contain bracket placeholders — they must never count against a match.
+export function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 3 && !STOPWORDS.has(w));
+}
+
 // Fraction of the query's meaningful words that appear in the candidate text.
+// A trailing "s" on a query word is ignored so "tweets" matches "tweet".
 export function scoreMatch(query: string, candidate: string): number {
-  const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  const words = tokenize(query);
   if (words.length === 0) return 0;
   const c = candidate.toLowerCase();
-  return words.filter(w => c.includes(w)).length / words.length;
+  return words.filter(
+    w => c.includes(w) || (w.length >= 5 && w.endsWith('s') && c.includes(w.slice(0, -1)))
+  ).length / words.length;
+}
+
+// Reduce a model-generated market question to something safe to send as a
+// search-box query: no bracket placeholders, no stray punctuation.
+export function toSearchQuery(text: string): string {
+  return text
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/[^a-zA-Z0-9\s$%.-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // Gamma returns outcomes/outcomePrices as JSON-encoded strings, e.g.

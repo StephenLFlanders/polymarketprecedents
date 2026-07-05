@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { searchEvents, scoreMatch } from '@/lib/polymarket';
+import { searchEvents, scoreMatch, toSearchQuery } from '@/lib/polymarket';
 
 export interface PrecedentInput {
   q: string;
   outcome: string;
   lesson: string;
+  search?: string;
 }
 
 export interface PrecedentResult extends PrecedentInput {
@@ -24,12 +25,17 @@ interface Candidate {
   text: string;
 }
 
-async function findPrecedentUrl(question: string): Promise<string | null> {
+async function findPrecedentUrl(question: string, searchHint?: string): Promise<string | null> {
+  // Search with the model's short search query when available — full questions
+  // match poorly as search input — then score candidates against the question.
+  const query = searchHint?.trim() || toSearchQuery(question);
+  if (!query) return null;
+
   // Precedents are usually resolved markets, but the default search is biased
   // toward active ones — query both and dedupe by event slug.
   const [general, resolved] = await Promise.all([
-    searchEvents(question),
-    searchEvents(question, 'resolved'),
+    searchEvents(query),
+    searchEvents(query, 'resolved'),
   ]);
   const seen = new Set<string>();
   const events = [...general, ...resolved].filter(e =>
@@ -73,7 +79,7 @@ export async function POST(req: NextRequest) {
   }
 
   const results: PrecedentResult[] = await Promise.all(
-    precedents.map(async (p) => ({ ...p, url: await findPrecedentUrl(p.q) }))
+    precedents.map(async (p) => ({ ...p, url: await findPrecedentUrl(p.q, p.search) }))
   );
 
   return NextResponse.json(results);
