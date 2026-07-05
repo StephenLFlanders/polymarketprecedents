@@ -1,77 +1,106 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { searchEvents, scoreMatch, tokenize, EventSearchResult } from '@/lib/polymarket';
 
 export interface PrecedentInput {
   q: string;
   outcome: string;
   lesson: string;
+  search?: string;
 }
 
 export interface PrecedentResult extends PrecedentInput {
   url: string | null;
+  // Diagnostic trail, visible in the browser Network tab — not rendered
+  debug?: {
+    query: string;
+    eventsFound: number;
+    bestScore: number;
+    bestUrl: string | null;
+  };
 }
 
-function scoreMatch(query: string, candidate: string): number {
-  const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-  if (words.length === 0) return 0;
-  const c = candidate.toLowerCase();
-  return words.filter(w => c.includes(w)).length / words.length;
+// Reject only on a genuine year conflict (e.g. a 2020 market offered for a
+// 2024 precedent). Polymarket titles and slugs routinely omit the year
+// entirely — a candidate that names no year cannot conflict.
+function yearsCompatible(query: string, candidateText: string): boolean {
+  const qYears = query.match(/\b(?:19|20)\d{2}\b/g);
+  if (!qYears) return true;
+  const cYears = candidateText.match(/\b(?:19|20)\d{2}\b/g);
+  if (!cYears) return true;
+  return qYears.some(y => cYears.includes(y));
 }
 
-function requiredTermsPresent(query: string, candidate: string): boolean {
-  // Any 4-digit number (years, IDs) in the query must appear in the candidate
-  const numbers = query.match(/\b\d{4}\b/g) ?? [];
-  const c = candidate.toLowerCase();
-  return numbers.every(n => c.includes(n));
+interface Candidate {
+  url: string;
+  score: number;
+  text: string;
 }
 
-interface Candidate { slug: string; score: number; }
+// Search both default (active-biased) and resolved events, deduped by slug.
+async function searchBoth(query: string): Promise<EventSearchResult[]> {
+  const [general, resolved] = await Promise.all([
+    searchEvents(query),
+    searchEvents(query, 'resolved'),
+  ]);
+  const seen = new Set<string>();
+  return [...general, ...resolved].filter(e =>
+    seen.has(e.slug) ? false : (seen.add(e.slug), true)
+  );
+}
 
-async function searchMarketsForCandidates(query: string, closed = false): Promise<Candidate[]> {
-  const params = new URLSearchParams({ search: query, limit: '10' });
-  if (closed) params.set('closed', 'true');
-  try {
-    const res = await fetch(
-      `https://gamma-api.polymarket.com/markets?${params}`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    if (!res.ok) return [];
-    const data = await res.json();
-    if (!Array.isArray(data)) return [];
-    return data
-      .map((m: Record<string, unknown>) => ({
-        slug: String(m.slug ?? ''),
-        score: scoreMatch(query, String(m.question ?? '')),
-      }))
-      .filter(c => c.slug && c.score > 0);
-  } catch {
-    return [];
+async function findPrecedentUrl(
+  question: string,
+  searchHint?: string
+): Promise<{ url: string | null; debug: NonNullable<PrecedentResult['debug']> }> {
+  // Search with the model's short search query when available — full questions
+  // match poorly as search input. Fallback: the question's distinctive words,
+  // numbers excluded since titles often drop dates.
+  const keywords = tokenize(question).filter(w => !/^\d+$/.test(w)).slice(0, 5).join(' ');
+  const query = searchHint?.trim() || keywords;
+  if (!query) return { url: null, debug: { query: '', eventsFound: 0, bestScore: 0, bestUrl: null } };
+
+  let events = await searchBoth(query);
+  if (events.length === 0 && keywords && keywords !== query) {
+    events = await searchBoth(keywords);
   }
-}
 
-async function searchEventsForCandidates(query: string, closed = false): Promise<Candidate[]> {
-  const params = new URLSearchParams({ search: query, limit: '10' });
-  if (closed) params.set('closed', 'true');
-  try {
-    const res = await fetch(
-      `https://gamma-api.polymarket.com/events?${params}`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    if (!res.ok) return [];
-    const data = await res.json();
-    if (!Array.isArray(data)) return [];
-    return data
-      .map((e: Record<string, unknown>) => {
-        const titleScore = scoreMatch(query, String(e.title ?? ''));
-        const marketScore = Array.isArray(e.markets)
-          ? Math.max(0, ...e.markets.map((m: Record<string, unknown>) =>
-              scoreMatch(query, String(m.question ?? ''))))
-          : 0;
-        return { slug: String(e.slug ?? ''), score: Math.max(titleScore, marketScore) };
-      })
-      .filter(c => c.slug && c.score > 0);
-  } catch {
-    return [];
+  let best: Candidate | null = null;
+  for (const e of events) {
+    let candidate: Candidate = {
+      url: `https://polymarket.com/event/${e.slug}`,
+      score: scoreMatch(question, e.title),
+      text: `${e.title} ${e.slug}`,
+    };
+    // A market question inside the event may match better than the event title;
+    // if so, deep-link that market
+    for (const m of e.markets) {
+      const score = scoreMatch(question, m.question);
+      if (score > candidate.score) {
+        candidate = {
+          url:
+            m.slug && m.slug !== e.slug
+              ? `https://polymarket.com/event/${e.slug}/${m.slug}`
+              : `https://polymarket.com/event/${e.slug}`,
+          score,
+          text: `${m.question} ${e.title} ${e.slug} ${m.slug}`,
+        };
+      }
+    }
+    if (!yearsCompatible(question, candidate.text)) continue;
+    if (!best || candidate.score > best.score) best = candidate;
   }
+
+  const url = best && best.score >= 0.5 ? best.url : null;
+  const debug = {
+    query,
+    eventsFound: events.length,
+    bestScore: best ? Math.round(best.score * 100) / 100 : 0,
+    bestUrl: best?.url ?? null,
+  };
+  console.log(
+    `precedent lookup: "${query}" → ${events.length} events, best score ${debug.bestScore} (${debug.bestUrl ?? 'none'}) → ${url ? 'linked' : 'no link'}`
+  );
+  return { url, debug };
 }
 
 export async function POST(req: NextRequest) {
@@ -83,25 +112,8 @@ export async function POST(req: NextRequest) {
 
   const results: PrecedentResult[] = await Promise.all(
     precedents.map(async (p) => {
-      // Run all four searches in parallel, then pick the highest-scoring result
-      const [activeMarkets, closedMarkets, activeEvents, closedEvents] = await Promise.all([
-        searchMarketsForCandidates(p.q, false),
-        searchMarketsForCandidates(p.q, true),
-        searchEventsForCandidates(p.q, false),
-        searchEventsForCandidates(p.q, true),
-      ]);
-
-      const all = [...activeMarkets, ...closedMarkets, ...activeEvents, ...closedEvents];
-      const best = all.reduce<Candidate | null>(
-        (prev, c) => (!prev || c.score > prev.score ? c : prev),
-        null
-      );
-
-      const url = best && best.score >= 0.5 && requiredTermsPresent(p.q, best.slug)
-        ? `https://polymarket.com/event/${best.slug}`
-        : null;
-
-      return { ...p, url };
+      const { url, debug } = await findPrecedentUrl(p.q, p.search);
+      return { ...p, url, debug };
     })
   );
 

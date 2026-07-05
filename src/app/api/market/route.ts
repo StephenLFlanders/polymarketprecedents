@@ -1,16 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { resolveMarketQuery, fetchMarketsFromEventSlug } from '@/lib/polymarket';
+import {
+  MarketData,
+  extractSlugCandidates,
+  fetchMarketBySlug,
+  fetchMarketsFromEventSlug,
+  searchEvents,
+  scoreMatch,
+} from '@/lib/polymarket';
 
-function extractSlug(q: string): string {
-  if (q.includes('polymarket.com')) {
-    try {
-      const url = new URL(q.startsWith('http') ? q : 'https://' + q);
-      const parts = url.pathname.split('/').filter(Boolean);
-      return parts[parts.length - 1];
-    } catch { /* fall through */ }
+function pickFromEvent(markets: MarketData[], preferredSlug?: string): NextResponse {
+  // If the pasted URL named a specific market within the event, return that one
+  if (preferredSlug) {
+    const exact = markets.find(m => m.slug === preferredSlug);
+    if (exact) return NextResponse.json(exact);
   }
-  if (q.includes('/')) return q.split('/').filter(Boolean).pop() ?? q;
-  return q;
+  if (markets.length === 1) return NextResponse.json(markets[0]);
+  const active = markets.filter(m => m.active && !m.closed);
+  const choices = active.length > 0 ? active : markets;
+  if (choices.length === 1) return NextResponse.json(choices[0]);
+  return NextResponse.json({ choices });
+}
+
+async function searchBestEventSlug(query: string): Promise<string | null> {
+  // Search both default (active-biased) and resolved events, then dedupe
+  const [general, resolved] = await Promise.all([
+    searchEvents(query),
+    searchEvents(query, 'resolved'),
+  ]);
+  const seen = new Set<string>();
+  const events = [...general, ...resolved].filter(e =>
+    seen.has(e.slug) ? false : (seen.add(e.slug), true)
+  );
+
+  let best: { slug: string; score: number } | null = null;
+  for (const e of events) {
+    const score = Math.max(
+      scoreMatch(query, e.title),
+      ...e.markets.map(m => scoreMatch(query, m.question))
+    );
+    if (!best || score > best.score) best = { slug: e.slug, score };
+  }
+  return best && best.score >= 0.5 ? best.slug : null;
 }
 
 export async function GET(req: NextRequest) {
@@ -27,30 +57,34 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  try {
-    const market = await resolveMarketQuery(q);
-    return NextResponse.json(market);
-  } catch {
-    // resolveMarketQuery failed — try the events API
-    const slug = extractSlug(q);
-    const eventMarkets = await fetchMarketsFromEventSlug(slug);
+  const looksLikeSlug = q.includes('polymarket.com') || q.includes('/') || !q.trim().includes(' ');
+  const candidates = looksLikeSlug ? extractSlugCandidates(q) : [];
 
-    if (!eventMarkets || eventMarkets.length === 0) {
-      return NextResponse.json(
-        { error: `Market not found for "${slug}". The market may have been removed or the URL may be incorrect.` },
-        { status: 404 }
-      );
+  if (looksLikeSlug) {
+    // Most specific segment first: try it as a market slug...
+    for (const slug of candidates) {
+      const market = await fetchMarketBySlug(slug);
+      if (market) return NextResponse.json(market);
     }
-
-    // Single market in event — return it directly
-    if (eventMarkets.length === 1) {
-      return NextResponse.json(eventMarkets[0]);
+    // ...then as an event slug (Polymarket URLs are usually event slugs)
+    for (const slug of candidates) {
+      const markets = await fetchMarketsFromEventSlug(slug);
+      if (markets && markets.length > 0) return pickFromEvent(markets, candidates[0]);
     }
-
-    // Multiple markets — only show active ones for the picker
-    const active = eventMarkets.filter(m => m.active && !m.closed);
-    const choices = active.length > 0 ? active : eventMarkets;
-    if (choices.length === 1) return NextResponse.json(choices[0]);
-    return NextResponse.json({ choices });
   }
+
+  // Free-text input, or a slug that no longer resolves — fall back to search
+  const searchQuery = (looksLikeSlug ? candidates[0].replace(/-/g, ' ') : q).trim();
+  if (searchQuery) {
+    const eventSlug = await searchBestEventSlug(searchQuery);
+    if (eventSlug) {
+      const markets = await fetchMarketsFromEventSlug(eventSlug);
+      if (markets && markets.length > 0) return pickFromEvent(markets);
+    }
+  }
+
+  return NextResponse.json(
+    { error: `No market found for "${q}". Try pasting the full Polymarket URL.` },
+    { status: 404 }
+  );
 }

@@ -46,9 +46,11 @@ Tight bullet list. Lead with the most surprising ways this resolves NO — thing
 
 ## 📚 Historical Precedents
 For each relevant precedent you have real knowledge of, output EXACTLY one line per market in this format — nothing else in this section:
-PRECEDENT: "Exact or close market question" | YES or NO | One sentence on what it teaches
+PRECEDENT: "Exact market question" | YES or NO | One sentence on what it teaches | 2-4 word search query
 
 Rules:
+- The question must be concrete: real names, dates, and numbers. NEVER use placeholders like [X], [name], or [date range] — if the precedent is a recurring market family, name one specific instance of it
+- The final field is what a person would type into Polymarket's search box to find that market (e.g. "elon musk tweets" or "fed rate cut")
 - Do NOT include URLs or slugs — links are resolved separately
 - Only include markets you have genuine knowledge of from Polymarket
 - If no directly relevant precedents exist, write: PRECEDENT: none

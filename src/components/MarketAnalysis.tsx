@@ -1,6 +1,6 @@
 'use client';
 
-import { MarketData } from '@/lib/polymarket';
+import { MarketData, getMarketUrl } from '@/lib/polymarket';
 import MarkdownRenderer from './MarkdownRenderer';
 import PrecedentsSection from './PrecedentsSection';
 import { TrendingUp, Clock, ExternalLink, Loader2 } from 'lucide-react';
@@ -86,7 +86,7 @@ export default function MarketAnalysis({ market, analysis, isStreaming, isLoadin
               )}
               {market.slug && (
                 <a
-                  href={`https://polymarket.com/event/${market.slug}`}
+                  href={getMarketUrl(market)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1.5 text-gray-500 hover:text-emerald-400 transition-colors"

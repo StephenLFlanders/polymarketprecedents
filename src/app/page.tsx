@@ -10,7 +10,7 @@ import MarketPicker from '@/components/MarketPicker';
 // Parse PRECEDENT: lines out of the analysis and return the cleaned body text
 function extractPrecedents(text: string): {
   body: string;
-  inputs: Array<{ q: string; outcome: string; lesson: string }>;
+  inputs: Array<{ q: string; outcome: string; lesson: string; search?: string }>;
 } {
   const headerRe = /^## 📚 Historical Precedents\s*$/m;
   const match = headerRe.exec(text);
@@ -19,15 +19,22 @@ function extractPrecedents(text: string): {
   const body = text.slice(0, match.index).trim();
   const after = text.slice(match.index + match[0].length);
 
-  const inputs: Array<{ q: string; outcome: string; lesson: string }> = [];
+  const inputs: Array<{ q: string; outcome: string; lesson: string; search?: string }> = [];
   for (const line of after.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed.startsWith('PRECEDENT:')) continue;
     const content = trimmed.slice('PRECEDENT:'.length).trim();
     if (content === 'none') continue;
-    // Format: "question" | OUTCOME | lesson
-    const m = content.match(/^"([^"]+)"\s*\|\s*(YES|NO|N\/A)\s*\|\s*(.+)$/i);
-    if (m) inputs.push({ q: m[1].trim(), outcome: m[2].toUpperCase(), lesson: m[3].trim() });
+    // Format: "question" | OUTCOME | lesson | search query (last field optional)
+    const m = content.match(/^"([^"]+)"\s*\|\s*(YES|NO|N\/A)\s*\|\s*([^|]+)(?:\|\s*(.+))?$/i);
+    if (m) {
+      inputs.push({
+        q: m[1].trim(),
+        outcome: m[2].toUpperCase(),
+        lesson: m[3].trim(),
+        search: m[4]?.trim() || undefined,
+      });
+    }
   }
   return { body, inputs };
 }
