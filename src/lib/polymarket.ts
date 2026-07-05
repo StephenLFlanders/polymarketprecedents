@@ -7,6 +7,7 @@ export interface MarketData {
   outcomePrices: string[];
   category: string;
   slug: string;
+  eventSlug: string | null;
   active: boolean;
   closed: boolean;
   volume: string;
@@ -17,25 +18,50 @@ export interface MarketData {
   resolution: string | null;
 }
 
-function extractSlug(input: string): string {
+export interface EventSearchResult {
+  slug: string;
+  title: string;
+  markets: Array<{ question: string; slug: string }>;
+}
+
+// polymarket.com pages live at /event/{eventSlug}, with individual markets of a
+// multi-market event at /event/{eventSlug}/{marketSlug}. A market slug alone is
+// NOT a valid event path (404 whenever the two slugs differ), but
+// /market/{marketSlug} redirects to the correct event page.
+export function getMarketUrl(market: Pick<MarketData, 'slug' | 'eventSlug'>): string {
+  if (market.eventSlug) {
+    return market.eventSlug === market.slug
+      ? `https://polymarket.com/event/${market.eventSlug}`
+      : `https://polymarket.com/event/${market.eventSlug}/${market.slug}`;
+  }
+  return `https://polymarket.com/market/${market.slug}`;
+}
+
+// A pasted URL can be /event/{eventSlug} or /event/{eventSlug}/{marketSlug}.
+// Return the path segments that could identify the market, most specific first.
+export function extractSlugCandidates(input: string): string[] {
   const trimmed = input.trim();
+  let parts: string[] = [];
 
   if (trimmed.includes('polymarket.com')) {
     try {
       const url = new URL(trimmed.startsWith('http') ? trimmed : 'https://' + trimmed);
-      const parts = url.pathname.split('/').filter(Boolean);
-      return parts[parts.length - 1];
+      parts = url.pathname.split('/').filter(Boolean);
     } catch {
       // Fall through
     }
   }
 
-  if (trimmed.includes('/')) {
-    const parts = trimmed.split('/').filter(Boolean);
-    return parts[parts.length - 1];
+  if (parts.length === 0 && trimmed.includes('/')) {
+    parts = trimmed.split('/').filter(Boolean);
   }
 
-  return trimmed.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  if (parts.length === 0) {
+    return [trimmed.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')];
+  }
+
+  const segments = parts.filter(p => !['event', 'market', 'markets', 'sports'].includes(p));
+  return segments.slice(-2).reverse();
 }
 
 export async function fetchMarketBySlug(slug: string): Promise<MarketData | null> {
@@ -47,15 +73,6 @@ export async function fetchMarketBySlug(slug: string): Promise<MarketData | null
   return normalizeMarket(data[0]);
 }
 
-export async function searchMarkets(query: string, limit = 5): Promise<MarketData[]> {
-  const url = `https://gamma-api.polymarket.com/markets?search=${encodeURIComponent(query)}&limit=${limit}&active=true`;
-  const res = await fetch(url, { next: { revalidate: 60 } });
-  if (!res.ok) return [];
-  const data = await res.json();
-  if (!Array.isArray(data)) return [];
-  return data.map(normalizeMarket);
-}
-
 export async function fetchMarketsFromEventSlug(slug: string): Promise<MarketData[] | null> {
   const url = `https://gamma-api.polymarket.com/events?slug=${encodeURIComponent(slug)}&limit=1`;
   const res = await fetch(url, { next: { revalidate: 60 } });
@@ -65,47 +82,82 @@ export async function fetchMarketsFromEventSlug(slug: string): Promise<MarketDat
   const event = data[0] as Record<string, unknown>;
   const markets = Array.isArray(event.markets) ? event.markets : [];
   if (markets.length === 0) return null;
-  return markets.map(m => normalizeMarket(m as Record<string, unknown>));
+  const eventSlug = String(event.slug ?? slug);
+  return markets.map(m => normalizeMarket(m as Record<string, unknown>, eventSlug));
 }
 
-export async function resolveMarketQuery(query: string): Promise<MarketData> {
-  const trimmed = query.trim();
-  const isUrl = trimmed.includes('polymarket.com') || trimmed.includes('/');
-  const slug = extractSlug(trimmed);
-
-  // Try market slug first, then event slug (Polymarket URLs are often event slugs)
-  const bySlug = await fetchMarketBySlug(slug);
-  if (bySlug) return bySlug;
-  // Event lookup handled separately in the API route (may return multiple choices)
-
-  // If input was a URL/slug, don't fall back to fuzzy search — the market likely doesn't exist
-  if (isUrl) {
-    throw new Error(`Market not found for slug "${slug}". The market may have been removed or the URL may be incorrect.`);
+// The gamma /markets and /events endpoints do NOT support a `search` param —
+// it is silently ignored and they return an arbitrary default listing.
+// Real text search goes through /public-search (what polymarket.com itself uses).
+export async function searchEvents(
+  query: string,
+  status?: 'active' | 'resolved'
+): Promise<EventSearchResult[]> {
+  const params = new URLSearchParams({ q: query, limit_per_type: '10' });
+  if (status) params.set('events_status', status);
+  try {
+    const res = await fetch(
+      `https://gamma-api.polymarket.com/public-search?${params}`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const events = Array.isArray(data?.events) ? data.events : [];
+    return events
+      .map((e: Record<string, unknown>) => ({
+        slug: String(e.slug ?? ''),
+        title: String(e.title ?? ''),
+        markets: Array.isArray(e.markets)
+          ? e.markets.map((m: Record<string, unknown>) => ({
+              question: String(m.question ?? ''),
+              slug: String(m.slug ?? ''),
+            }))
+          : [],
+      }))
+      .filter((e: EventSearchResult) => e.slug);
+  } catch {
+    return [];
   }
-
-  // For free-text queries, try search
-  const results = await searchMarkets(trimmed, 5);
-  // Only return a search result if the question roughly matches the query
-  const queryWords = trimmed.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-  const match = results.find(m => {
-    const q = m.question.toLowerCase();
-    return queryWords.some(w => q.includes(w));
-  });
-  if (match) return match;
-
-  throw new Error(`No market found for: "${trimmed}". Try pasting the full Polymarket URL.`);
 }
 
-function normalizeMarket(raw: Record<string, unknown>): MarketData {
+// Fraction of the query's meaningful words that appear in the candidate text.
+export function scoreMatch(query: string, candidate: string): number {
+  const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  if (words.length === 0) return 0;
+  const c = candidate.toLowerCase();
+  return words.filter(w => c.includes(w)).length / words.length;
+}
+
+// Gamma returns outcomes/outcomePrices as JSON-encoded strings, e.g.
+// "[\"Yes\", \"No\"]" — handle both that and plain arrays.
+function parseJsonArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.map(String);
+    } catch {
+      // Not JSON
+    }
+  }
+  return [];
+}
+
+function normalizeMarket(raw: Record<string, unknown>, eventSlug?: string): MarketData {
+  const events = Array.isArray(raw.events) ? (raw.events as Array<Record<string, unknown>>) : [];
+  const parentSlug = eventSlug ?? (events.length > 0 ? String(events[0]?.slug ?? '') : '');
+  const outcomes = parseJsonArray(raw.outcomes);
+
   return {
     id: String(raw.id ?? ''),
     conditionId: String(raw.conditionId ?? raw.condition_id ?? raw.id ?? ''),
     question: String(raw.question ?? ''),
     description: String(raw.description ?? raw.rules ?? ''),
-    outcomes: Array.isArray(raw.outcomes) ? raw.outcomes.map(String) : ['Yes', 'No'],
-    outcomePrices: Array.isArray(raw.outcomePrices) ? raw.outcomePrices.map(String) : [],
+    outcomes: outcomes.length > 0 ? outcomes : ['Yes', 'No'],
+    outcomePrices: parseJsonArray(raw.outcomePrices),
     category: String(raw.category ?? raw.tags ?? ''),
     slug: String(raw.slug ?? ''),
+    eventSlug: parentSlug || null,
     active: Boolean(raw.active),
     closed: Boolean(raw.closed),
     volume: String(raw.volume ?? '0'),
